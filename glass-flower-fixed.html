@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>玻璃花朵设计 - Glass Flower Design</title>
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      background: #111; 
+      font-family: Arial, sans-serif;
+    }
+    canvas { 
+      display: block; 
+    }
+    #info {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      text-align: center;
+      color: white;
+      font-size: 16px;
+      z-index: 100;
+    }
+    #loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      color: white;
+      font-size: 24px;
+      z-index: 1000;
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">加载中... (Loading...)</div>
+  <div id="info">移动鼠标到图形上开花 (Hover over shape to make glass flowers bloom)</div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  
+  <script>
+    window.onload = function() {
+      // 创建场景
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x222222); // 深灰色背景
+      
+      // 创建相机
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 5;
+      
+      // 创建渲染器
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      document.body.appendChild(renderer.domElement);
+      
+      // 添加灯光
+      scene.add(new THREE.AmbientLight(0xffffff, 0.3));
+      
+      // 主要方向光
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight.position.set(5, 5, 5);
+      scene.add(dirLight);
+      
+      // 添加点光源，增强玻璃效果
+      const pointLight1 = new THREE.PointLight(0x4FC3F7, 0.8, 20); // 蓝色光
+      pointLight1.position.set(3, 3, 3);
+      scene.add(pointLight1);
+      
+      // 添加第二个点光源，不同颜色
+      const pointLight2 = new THREE.PointLight(0xF06292, 0.8, 20); // 粉色光
+      pointLight2.position.set(-3, -3, 3);
+      scene.add(pointLight2);
+      
+      // 使用固定的顶点数创建基础几何体 - 用二十面体确保均匀分布
+      const baseGeometry = new THREE.IcosahedronGeometry(1.5, 2);
+      
+      // 创建变形目标
+      const targetPositions = [];
+      const targetNormals = [];  // 存储每个目标的法线
+      
+      // 目标1：球体 (已是基础几何体)
+      targetPositions.push(baseGeometry.attributes.position.array.slice());
+      
+      // 复制球体的法线数组
+      const sphereNormals = baseGeometry.attributes.normal.array.slice();
+      targetNormals.push(sphereNormals);
+      
+      // 目标2：椭球体 - 保持与球体面积相近
+      function createEllipsoid(basePositions) {
+        const positions = basePositions.slice();
+        // 创建一个新的几何体来计算法线
+        const ellipsoidGeo = new THREE.BufferGeometry();
+        const posAttribute = new THREE.BufferAttribute(new Float32Array(positions), 3);
+        ellipsoidGeo.setAttribute('position', posAttribute);
+        
+        // 应用变形 - 使用能保持面积近似不变的缩放因子
+        // 如果在一个方向上拉伸，则在其他方向上压缩
+        // 对于椭球体，假设a*b*c≈r³ 其中r是原始球体半径
+        // 设置X轴缩放为1.5，计算Y和Z的缩放以保持体积
+        const xScale = 1.5;
+        const yScale = 1.0; // 保持Y轴不变
+        const zScale = 1.0 / (xScale * yScale); // 使得三个轴的乘积为1，保持体积
+        
+        for (let i = 0; i < positions.length; i += 3) {
+          positions[i] *= xScale;     // X轴拉伸
+          positions[i + 1] *= yScale;  // Y轴保持不变
+          positions[i + 2] *= zScale;  // Z轴适当压缩
+        }
+        
+        // 更新位置并计算法线
+        posAttribute.needsUpdate = true;
+        ellipsoidGeo.computeVertexNormals();
+        
+        // 获取计算的法线
+        const normals = ellipsoidGeo.attributes.normal.array.slice();
+        targetNormals.push(normals);
+        
+        return positions;
+      }
+      
+      // 目标3：扁平球体 - 同样保持与球体面积相近
+      function createFlatSphere(basePositions) {
+        const positions = basePositions.slice();
+        // 创建一个新的几何体来计算法线
+        const flatSphereGeo = new THREE.BufferGeometry();
+        const posAttribute = new THREE.BufferAttribute(new Float32Array(positions), 3);
+        flatSphereGeo.setAttribute('position', posAttribute);
+        
+        // 应用变形 - 使用能保持面积近似不变的缩放因子
+        // 类似椭球体，但压缩更极端
+        const xScale = 1.3;
+        const yScale = 0.6; // Y轴压缩更多
+        const zScale = 1.3; // Z轴扩展和X轴相同
+        
+        // 计算调整因子，使体积接近原始球体
+        const volumeRatio = xScale * yScale * zScale;
+        // 如果体积变化太大，应用调整因子
+        const adjustmentFactor = Math.pow(1.0 / volumeRatio, 1/3);
+        
+        for (let i = 0; i < positions.length; i += 3) {
+          positions[i] *= xScale * adjustmentFactor;
+          positions[i + 1] *= yScale * adjustmentFactor; 
+          positions[i + 2] *= zScale * adjustmentFactor;
+        }
+        
+        // 更新位置并计算法线
+        posAttribute.needsUpdate = true;
+        flatSphereGeo.computeVertexNormals();
+        
+        // 获取计算的法线
+        const normals = flatSphereGeo.attributes.normal.array.slice();
+        targetNormals.push(normals);
+        
+        return positions;
+      }
+      
+      // 添加变形目标
+      targetPositions.push(createEllipsoid(targetPositions[0]));
+      targetPositions.push(createFlatSphere(targetPositions[0]));
+      
+      // 简化版玻璃材质 - 避免需要环境贴图
+      const material = new THREE.MeshPhongMaterial({
+        color: 0x7EC8E3,
+        specular: 0xffffff,
+        shininess: 100,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide
+      });
+      
+      // 创建网格
+      const mesh = new THREE.Mesh(baseGeometry, material);
+      scene.add(mesh);
+      
+      // 创建线框
+      const wireframe = new THREE.LineSegments(
+        new THREE.WireframeGeometry(baseGeometry),
+        new THREE.LineBasicMaterial({ 
+          color: 0x88ccff,
+          transparent: true,
+          opacity: 0.2
+        })
+      );
+      scene.add(wireframe);
+      
+      // 花朵容器
+      const flowerGroup = new THREE.Group();
+      scene.add(flowerGroup);
+      
+      // 颜色定义
+      const colors = [0x7EC8E3, 0xB4D2E7, 0xA6D3DC];
+      
+      // 花朵玻璃颜色
+      const flowerColors = [0xFF5252, 0xFFEB3B, 0x4CAF50, 0x2196F3, 0x9C27B0];
+      
+      // 变形控制
+      let currentTarget = 0;
+      let nextTarget = 1;
+      let morphProgress = 0;
+      let morphPaused = false;
+      
+      // 用于存储花朵位置和关联信息
+      const flowerVertices = new Set();
+      const flowerPairs = new Map(); // 存储顶点到花朵对的映射，用于保持配对
+      
+      // 鼠标和射线
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2(-10, -10);
+      let lastFlowerTime = 0;
+      
+      // 鼠标移动事件处理
+      function onMouseMove(event) {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      }
+      window.addEventListener('mousemove', onMouseMove);
+      
+      // 窗口大小调整
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+      window.addEventListener('resize', onWindowResize);
+      
+      // 创建心形花瓣
+      function createHeartShape() {
+        const shape = new THREE.Shape();
+        
+        // 心形曲线方程
+        const width = 0.25;
+        const height = 0.25;
+        
+        shape.moveTo(0, 0);
+        
+        // 上半部分左侧
+        shape.bezierCurveTo(
+          -width/4, height/8,   // 控制点1
+          -width/2, height/2,   // 控制点2
+          0, height             // 终点
+        );
+        
+        // 上半部分右侧
+        shape.bezierCurveTo(
+          width/2, height/2,    // 控制点1
+          width/4, height/8,    // 控制点2
+          0, 0                  // 回到起点
+        );
+        
+        return shape;
+      }
+      
+      // 创建真实的玻璃花朵
+      function createFlower(vertexIndex, isSecondFlower = false) {
+        // 创建花朵组
+        const flower = new THREE.Group();
+        
+        // 随机选择颜色 - 但确保一对花朵颜色相同
+        let colorIndex;
+        
+        if (!isSecondFlower) {
+          // 第一朵花 - 随机选择颜色
+          colorIndex = Math.floor(Math.random() * flowerColors.length);
+          // 存储颜色索引以便第二朵花使用
+          flower.userData = { colorIndex };
+        } else {
+          // 第二朵花 - 使用与第一朵相同的颜色
+          const firstFlower = flowerPairs.get(vertexIndex);
+          colorIndex = firstFlower ? firstFlower.userData.colorIndex : Math.floor(Math.random() * flowerColors.length);
+        }
+        
+        const baseColor = flowerColors[colorIndex];
+        
+        // 创建简化版玻璃花瓣材质
+        const petalMaterial = new THREE.MeshPhongMaterial({ 
+          color: baseColor,
+          specular: 0xffffff,
+          shininess: 100,
+          transparent: true,
+          opacity: 0.8,
+          side: THREE.DoubleSide
+        });
+        
+        // 创建花心材质
+        const centerMaterial = new THREE.MeshPhongMaterial({ 
+          color: flowerColors[(colorIndex + 2) % flowerColors.length],
+          specular: 0xffffff,
+          shininess: 120,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide
+        });
+        
+        // 花瓣尺寸
+        const petalScale = isSecondFlower ? 0.5 : 0.55;
+        
+        // 整体尺寸 - 扩大四倍
+        const globalScale = 2.0; // 从1.0扩大到2.0，总共是原来的4倍
+        
+        // 花瓣数量
+        const petalCount = 5;
+        
+        // 为花朵创建中心组，以便管理花瓣
+        const flowerCenter = new THREE.Group();
+        flower.add(flowerCenter);
+        
+        // 创建花瓣 - 使用心形花瓣
+        for (let i = 0; i < petalCount; i++) {
+          // 使用心形作为花瓣
+          const heartShape = createHeartShape();
+          
+          // 挤出以增加一些厚度
+          const extrudeSettings = {
+            steps: 1,
+            depth: 0.02,
+            bevelEnabled: false
+          };
+          
+          const petalGeometry = new THREE.ExtrudeGeometry(heartShape, extrudeSettings);
+          const petal = new THREE.Mesh(petalGeometry, petalMaterial.clone());
+          
+          // 稍微变化每个花瓣的颜色以增加自然感
+          petal.material.color.setHex(baseColor);
+          
+          // 围绕中心排列花瓣
+          const angle = (i / petalCount) * Math.PI * 2;
+          
+          // 花瓣位置稍微偏移，使基部靠近中心点
+          petal.position.set(0, 0, 0);
+          
+          // 旋转花瓣，使尖端朝外
+          petal.rotation.z = angle;
+          
+          // 稍微向上弯曲花瓣
+          petal.rotation.x = -0.3;
+          
+          // 缩放花瓣 - 扩大四倍
+          petal.scale.set(
+            globalScale * petalScale,
+            globalScale * petalScale,
+            globalScale * petalScale
+          );
+          
+          flowerCenter.add(petal);
+        }
+        
+        // 只为上面的花（第二朵花）添加花心
+        if (isSecondFlower) {
+          // 创建球形花心，更立体
+          const centerGeometry = new THREE.SphereGeometry(0.05, 12, 12);
+          const center = new THREE.Mesh(centerGeometry, centerMaterial);
+          center.position.z = 0.06; // 稍微调整位置以适应更大尺寸
+          center.scale.set(globalScale * petalScale, globalScale * petalScale, globalScale * petalScale * 0.8);
+          flowerCenter.add(center);
+        }
+        
+        // 如果是第二朵花（花心），不再添加任何旋转
+        if (isSecondFlower) {
+          // 完全移除旋转，使小花与大花完全平行且花瓣排列一致
+          // flowerCenter.rotation.z = Math.PI * 0.4; // 注释掉旋转代码
+        }
+        
+        // 设置初始大小 - 从较小开始生长
+        flower.scale.set(0.01, 0.01, 0.01);
+        
+        // 记录数据
+        flower.userData = {
+          ...flower.userData,
+          vertexIndex: vertexIndex,
+          isSecondFlower: isSecondFlower,
+          targetScale: isSecondFlower ? 0.75 : 1.0, // 这是相对花自身的比例，不是绝对大小
+          offset: isSecondFlower ? new THREE.Vector3(0, 0, 0.05) : new THREE.Vector3(0, 0, 0) // 恢复原来的偏移量
+        };
+        
+        return flower;
+      }
+      
+      // 更新花朵位置和朝向 - 确保两朵花完全平行
+      function updateFlower(flower, partnerFlower = null) {
+        const vertexIndex = flower.userData.vertexIndex;
+        
+        // 获取顶点位置
+        const x = mesh.geometry.attributes.position.array[vertexIndex * 3];
+        const y = mesh.geometry.attributes.position.array[vertexIndex * 3 + 1];
+        const z = mesh.geometry.attributes.position.array[vertexIndex * 3 + 2];
+        
+        // 获取法线
+        const normalX = mesh.geometry.attributes.normal.array[vertexIndex * 3];
+        const normalY = mesh.geometry.attributes.normal.array[vertexIndex * 3 + 1];
+        const normalZ = mesh.geometry.attributes.normal.array[vertexIndex * 3 + 2];
+        
+        // 创建位置和法线向量
+        const position = new THREE.Vector3(x, y, z);
+        const normal = new THREE.Vector3(normalX, normalY, normalZ);
+        
+        // 将位置和法线从局部坐标变换到世界坐标
+        position.applyMatrix4(mesh.matrixWorld);
+        normal.applyQuaternion(mesh.quaternion).normalize();
+        
+        // 计算朝向
+        let tangent = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(normal.dot(tangent)) > 0.9) {
+          tangent = new THREE.Vector3(1, 0, 0);
+        }
+        
+        // 计算与法线垂直的"右"向量
+        const right = new THREE.Vector3().crossVectors(tangent, normal).normalize();
+        
+        // 重新计算与法线和右向量垂直的"上"向量
+        tangent = new THREE.Vector3().crossVectors(normal, right).normalize();
+        
+        // 创建朝向矩阵，使花朵平行于表面（Z轴沿法线方向）
+        const matrix = new THREE.Matrix4().makeBasis(right, tangent, normal);
+        
+        // 如果这是上层花朵，则使用来自基础花朵的位置和朝向
+        if (flower.userData.isSecondFlower && partnerFlower) {
+          // 获取基础花朵位置
+          const basePosition = partnerFlower.position.clone();
+          // 设置上层花朵位置 - 沿法线方向偏移
+          const normalOffset = normal.clone().multiplyScalar(0.05); // 恢复原来的偏移量 
+          basePosition.add(normalOffset);
+          flower.position.copy(basePosition);
+          
+          // 应用与基础花朵相同的方向
+          const baseMatrix = new THREE.Matrix4();
+          baseMatrix.extractRotation(partnerFlower.matrix);
+          
+          // 应用朝向矩阵
+          flower.setRotationFromMatrix(baseMatrix);
+        } else {
+          // 这是基础花朵或者没有配对花朵的情况
+          // 应用偏移 - 如果是第二朵花，沿法线方向偏移
+          if (flower.userData.isSecondFlower) {
+            // 克隆法线并缩放为偏移距离
+            const normalOffset = normal.clone().multiplyScalar(0.05); // 增加偏移量
+            position.add(normalOffset);
+          }
+          
+          // 更新花朵位置
+          flower.position.copy(position);
+          
+          // 应用朝向矩阵
+          flower.setRotationFromMatrix(matrix);
+        }
+        
+        // 处理生长动画 - 尺寸变大
+        const targetScale = flower.userData.targetScale;
+        if (flower.scale.x < targetScale) {
+          flower.scale.x += 0.04; // 加快生长速度
+          flower.scale.y += 0.04;
+          flower.scale.z += 0.04;
+          if (flower.scale.x > targetScale) {
+            flower.scale.set(targetScale, targetScale, targetScale);
+          }
+        }
+      }
+      
+      // 更新一对花朵，保持完全平行
+      function updateFlowerPair(vertexIndex) {
+        const pair = flowerPairs.get(vertexIndex);
+        if (pair) {
+          const baseFlower = pair.base;
+          const topFlower = pair.top;
+          
+          // 先更新底部花朵
+          updateFlower(baseFlower);
+          
+          // 保存底部花朵的旋转信息，确保顶部花朵完全平行
+          const baseRotation = new THREE.Euler().copy(baseFlower.rotation);
+          
+          // 然后使用底部花朵的方位来更新顶部花朵
+          updateFlower(topFlower, baseFlower);
+          
+          // 如果这是被标记为平行的花朵对，强制设置完全相同的旋转
+          if (pair.parallel) {
+            // 获取花朵中心组，因为这是我们需要使平行的部分
+            const baseFlowerCenter = baseFlower.children[0];
+            const topFlowerCenter = topFlower.children[0];
+            
+            // 确保两个花朵中心组的旋转完全相同
+            topFlowerCenter.rotation.copy(baseFlowerCenter.rotation);
+          }
+        }
+      }
+      
+      // 缓动函数 - 平滑过渡
+      function easeInOutQuad(t) {
+        return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      }
+      
+      // 动画循环
+      function animate(time) {
+        requestAnimationFrame(animate);
+        
+        // 计算帧间隔
+        const now = Date.now();
+        const deltaTime = Math.min((now - (lastTime || now)) / 1000, 0.1);
+        lastTime = now;
+        
+        // 旋转几何体
+        mesh.rotation.x += deltaTime * 0.2;
+        mesh.rotation.y += deltaTime * 0.3;
+        wireframe.rotation.copy(mesh.rotation);
+        
+        // 更新点光源位置 - 让光源随着几何体旋转
+        pointLight1.position.x = Math.sin(time * 0.001) * 5;
+        pointLight1.position.y = Math.cos(time * 0.001) * 5;
+        pointLight1.position.z = 3;
+        
+        // 第二个光源反向移动
+        pointLight2.position.x = Math.sin(time * 0.001 + Math.PI) * 5;
+        pointLight2.position.y = Math.cos(time * 0.001 + Math.PI) * 5;
+        pointLight2.position.z = 3;
+        
+        // 更新模型矩阵
+        mesh.updateMatrixWorld();
+        
+        // 处理形状变形
+        if (!morphPaused) {
+          morphProgress += deltaTime * 0.15; // 减慢变形速度，更平滑
+          
+          if (morphProgress >= 1) {
+            morphProgress = 0;
+            currentTarget = nextTarget;
+            nextTarget = (nextTarget + 1) % targetPositions.length;
+            material.color.setHex(colors[currentTarget % colors.length]);
+            
+            // 暂停一下再开始下一次变形
+            morphPaused = true;
+            setTimeout(() => { morphPaused = false; }, 1000);
+          }
+        }
+        
+        // 使用缓动函数使变形更自然
+        const easedProgress = easeInOutQuad(morphProgress);
+        
+        // 进行顶点位置插值
+        const currentPositions = targetPositions[currentTarget];
+        const nextPositions = targetPositions[nextTarget];
+        const positions = mesh.geometry.attributes.position.array;
+        
+        // 平滑插值所有顶点位置
+        for (let i = 0; i < positions.length; i++) {
+          positions[i] = currentPositions[i] * (1 - easedProgress) + nextPositions[i] * easedProgress;
+        }
+        
+        // 进行法线插值
+        const currentNormals = targetNormals[currentTarget];
+        const nextNormals = targetNormals[nextTarget];
+        const normals = mesh.geometry.attributes.normal.array;
+        
+        // 平滑插值所有法线
+        for (let i = 0; i < normals.length; i++) {
+          normals[i] = currentNormals[i] * (1 - easedProgress) + nextNormals[i] * easedProgress;
+        }
+        
+        // 标记几何体需要更新
+        mesh.geometry.attributes.position.needsUpdate = true;
+        mesh.geometry.attributes.normal.needsUpdate = true;
+        
+        // 更新线框
+        wireframe.geometry.dispose();
+        wireframe.geometry = new THREE.WireframeGeometry(mesh.geometry);
+        
+        // 检查鼠标是否悬停在几何体上
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(mesh);
+        
+        if (intersects.length > 0 && now - lastFlowerTime > 200) {
+          lastFlowerTime = now;
+          
+          // 找到最接近交点的顶点
+          let closestVertex = -1;
+          let minDistance = Infinity;
+          
+          const intersection = intersects[0].point;
+          
+          for (let i = 0; i < mesh.geometry.attributes.position.count; i++) {
+            const x = mesh.geometry.attributes.position.array[i * 3];
+            const y = mesh.geometry.attributes.position.array[i * 3 + 1];
+            const z = mesh.geometry.attributes.position.array[i * 3 + 2];
+            
+            // 创建顶点位置向量
+            const vertexPos = new THREE.Vector3(x, y, z);
+            vertexPos.applyMatrix4(mesh.matrixWorld); // 变换到世界坐标
+            
+            // 计算与交点的距离
+            const dist = vertexPos.distanceTo(intersection);
+            
+            if (dist < minDistance) {
+              minDistance = dist;
+              closestVertex = i;
+            }
+          }
+          
+          // 如果该顶点还没有花朵，则创建两朵花
+          if (closestVertex !== -1 && !flowerVertices.has(closestVertex)) {
+            // 创建第一朵花（下方）
+            const flower1 = createFlower(closestVertex, false);
+            flowerGroup.add(flower1);
+            
+            // 创建第二朵花（上方，较小且旋转72度，有花心）
+            const flower2 = createFlower(closestVertex, true);
+            flowerGroup.add(flower2);
+            
+            // 存储花朵对的关联 - 确保平行
+            flowerPairs.set(closestVertex, { 
+              base: flower1, 
+              top: flower2,
+              // 添加标记，表示这是平行的花朵对
+              parallel: true 
+            });
+            
+            // 记录此顶点已有花朵
+            flowerVertices.add(closestVertex);
+            
+            // 立即更新这对花朵
+            updateFlowerPair(closestVertex);
+          }
+        }
+        
+        // 更新所有花朵对
+        flowerVertices.forEach(vertexIndex => {
+          updateFlowerPair(vertexIndex);
+        });
+        
+        // 渲染场景
+        renderer.render(scene, camera);
+      }
+      
+      // 隐藏加载屏幕
+      document.getElementById('loading').style.display = 'none';
+      
+      // 开始动画
+      let lastTime = null;
+      animate();
+    };
+  </script>
+</body>
+</html>
