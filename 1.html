@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>鼠标悬停开花效果</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #111; }
+    canvas { display: block; }
+    #info {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      text-align: center;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">移动鼠标到图形上开花 (Hover over shape to make flowers bloom)</div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  
+  <script>
+    // 等待页面加载
+    window.onload = function() {
+      // 创建场景
+      const scene = new THREE.Scene();
+      
+      // 创建相机
+      const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.z = 5;
+      
+      // 创建渲染器
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+      
+      // 添加灯光
+      scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+      dirLight.position.set(5, 5, 5);
+      scene.add(dirLight);
+      
+      // 创建几何体 - 使用更高分辨率球体以获得更好的鼠标交互
+      const geometry = new THREE.SphereGeometry(1.5, 24, 18);
+      
+      // 创建材质
+      const material = new THREE.MeshPhongMaterial({
+        color: 0x7EC8E3,
+        flatShading: true
+      });
+      
+      // 创建网格
+      const mesh = new THREE.Mesh(geometry, material);
+      scene.add(mesh);
+      
+      // 映射顶点索引到花朵
+      const vertexFlowers = new Map();
+      
+      // 鼠标交互
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2(-10, -10); // 初始化在视图外
+      let lastFlowerTime = 0;
+      
+      // 存储花朵
+      const flowerGroup = new THREE.Group();
+      scene.add(flowerGroup);
+      
+      // 花朵颜色
+      const flowerColors = [0xFF5252, 0xFFEB3B, 0x4CAF50, 0x2196F3, 0x9C27B0];
+      
+      // 创建花朵函数 - 与顶点关联
+      function createFlowerAtVertex(vertexIndex) {
+        // 获取顶点位置
+        const x = geometry.attributes.position.array[vertexIndex * 3];
+        const y = geometry.attributes.position.array[vertexIndex * 3 + 1];
+        const z = geometry.attributes.position.array[vertexIndex * 3 + 2];
+        
+        const position = new THREE.Vector3(x, y, z);
+        
+        // 创建花朵组
+        const flower = new THREE.Group();
+        
+        // 随机选择颜色
+        const petalColor = flowerColors[Math.floor(Math.random() * flowerColors.length)];
+        const centerColor = flowerColors[Math.floor(Math.random() * flowerColors.length)];
+        
+        // 创建材质
+        const petalMaterial = new THREE.MeshPhongMaterial({ 
+          color: petalColor,
+          side: THREE.DoubleSide  // 双面可见
+        });
+        const centerMaterial = new THREE.MeshPhongMaterial({ 
+          color: centerColor,
+          side: THREE.DoubleSide  // 双面可见
+        });
+        
+        // 创建椭圆花瓣
+        for (let i = 0; i < 5; i++) {
+          // 使用椭圆形几何体
+          const petalGeometry = new THREE.CircleGeometry(0.2, 16);
+          
+          // 变形为椭圆
+          for (let j = 0; j < petalGeometry.attributes.position.array.length; j += 3) {
+            petalGeometry.attributes.position.array[j] *= 1.0;     // x 保持不变
+            petalGeometry.attributes.position.array[j + 1] *= 0.5; // y 压缩一半
+          }
+          petalGeometry.attributes.position.needsUpdate = true;
+          
+          const petal = new THREE.Mesh(petalGeometry, petalMaterial);
+          
+          // 围绕中心放置花瓣
+          const angle = (i / 5) * Math.PI * 2;
+          petal.position.set(
+            Math.cos(angle) * 0.2,
+            Math.sin(angle) * 0.2,
+            0.01  // 略微向外
+          );
+          
+          // 旋转花瓣
+          petal.rotation.z = angle;
+          
+          flower.add(petal);
+        }
+        
+        // 创建花心
+        const centerGeometry = new THREE.CircleGeometry(0.1, 16);
+        const center = new THREE.Mesh(centerGeometry, centerMaterial);
+        center.position.z = 0.02; // 确保位于花瓣上方
+        flower.add(center);
+        
+        // 获取顶点的法线方向
+        const normalX = geometry.attributes.normal.array[vertexIndex * 3];
+        const normalY = geometry.attributes.normal.array[vertexIndex * 3 + 1];
+        const normalZ = geometry.attributes.normal.array[vertexIndex * 3 + 2];
+        
+        const normal = new THREE.Vector3(normalX, normalY, normalZ).normalize();
+        
+        // 计算花朵朝向 - 使其平行于表面
+        // 创建一个朝向与法线一致的旋转
+        const up = new THREE.Vector3(0, 1, 0);
+        if (Math.abs(normal.dot(up)) > 0.9) {
+          up.set(1, 0, 0); // 如果法线与Y轴太接近，使用X轴
+        }
+        
+        // 计算朝向
+        const lookTarget = new THREE.Vector3().addVectors(position, normal);
+        
+        // 设置花朵位置
+        flower.position.copy(position);
+        
+        // 设置朝向 - 花朵朝着法线方向
+        flower.lookAt(lookTarget);
+        
+        // 设置初始大小
+        flower.scale.set(0.01, 0.01, 0.01); // 从很小开始生长
+        
+        // 记录关联的顶点索引和创建时间
+        flower.userData.vertexIndex = vertexIndex;
+        flower.userData.createTime = Date.now();
+        
+        return flower;
+      }
+      
+      // 更新花朵位置和朝向
+      function updateFlower(flower) {
+        // 获取顶点索引
+        const vertexIndex = flower.userData.vertexIndex;
+        
+        // 获取顶点的当前世界位置
+        const x = geometry.attributes.position.array[vertexIndex * 3];
+        const y = geometry.attributes.position.array[vertexIndex * 3 + 1];
+        const z = geometry.attributes.position.array[vertexIndex * 3 + 2];
+        
+        const position = new THREE.Vector3(x, y, z);
+        
+        // 应用模型变换矩阵
+        position.applyMatrix4(mesh.matrixWorld);
+        
+        // 获取顶点的法线
+        const normalX = geometry.attributes.normal.array[vertexIndex * 3];
+        const normalY = geometry.attributes.normal.array[vertexIndex * 3 + 1];
+        const normalZ = geometry.attributes.normal.array[vertexIndex * 3 + 2];
+        
+        const normal = new THREE.Vector3(normalX, normalY, normalZ);
+        normal.applyQuaternion(mesh.quaternion).normalize(); // 应用旋转
+        
+        // 设置花朵位置
+        flower.position.copy(position);
+        
+        // 设置花朵朝向
+        const lookTarget = new THREE.Vector3().addVectors(position, normal);
+        flower.lookAt(lookTarget);
+      }
+      
+      // 鼠标移动事件 - 更新鼠标位置
+      function onMouseMove(event) {
+        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      }
+      window.addEventListener('mousemove', onMouseMove);
+      
+      // 窗口大小调整
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+      window.addEventListener('resize', onWindowResize);
+      
+      // 动画循环
+      function animate(time) {
+        requestAnimationFrame(animate);
+        
+        // 更新模型矩阵
+        mesh.updateMatrixWorld();
+        
+        // 旋转球体 - 降低速度
+        mesh.rotation.x += 0.002;
+        mesh.rotation.y += 0.003;
+        
+        // 检查鼠标是否悬停在球体上
+        raycaster.setFromCamera(mouse, camera);
+        const intersects = raycaster.intersectObject(mesh);
+        
+        // 如果鼠标悬停在球体上，且距离上次创建花朵已经过了足够时间
+        if (intersects.length > 0 && time - lastFlowerTime > 200) {
+          lastFlowerTime = time;
+          
+          // 获取交点
+          const intersection = intersects[0];
+          
+          // 找到最接近交点的顶点
+          let closestVertex = -1;
+          let minDistance = Infinity;
+          
+          for (let i = 0; i < geometry.attributes.position.count; i++) {
+            const x = geometry.attributes.position.array[i * 3];
+            const y = geometry.attributes.position.array[i * 3 + 1];
+            const z = geometry.attributes.position.array[i * 3 + 2];
+            
+            // 创建顶点位置向量
+            const vertexPos = new THREE.Vector3(x, y, z);
+            // 应用模型变换获取世界坐标
+            vertexPos.applyMatrix4(mesh.matrixWorld);
+            
+            // 计算与交点的距离
+            const dist = vertexPos.distanceTo(intersection.point);
+            
+            if (dist < minDistance) {
+              minDistance = dist;
+              closestVertex = i;
+            }
+          }
+          
+          // 如果该顶点还没有花朵，则创建一朵
+          if (closestVertex !== -1 && !vertexFlowers.has(closestVertex)) {
+            const flower = createFlowerAtVertex(closestVertex);
+            flowerGroup.add(flower);
+            vertexFlowers.set(closestVertex, flower);
+            console.log("创建花朵在顶点:", closestVertex);
+          }
+        }
+        
+        // 更新所有花朵
+        vertexFlowers.forEach((flower, vertexIndex) => {
+          // 更新位置和朝向
+          updateFlower(flower);
+          
+          // 更新生长动画
+          if (flower.scale.x < 0.4) { // 生长到一定大小
+            flower.scale.x += 0.01;
+            flower.scale.y += 0.01;
+            flower.scale.z += 0.01;
+          }
+        });
+        
+        // 渲染场景
+        renderer.render(scene, camera);
+      }
+      
+      // 开始动画
+      animate();
+    };
+  </script>
+</body>
+</html>
